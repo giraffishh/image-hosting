@@ -1,0 +1,26 @@
+name: Sync to GitLab
+
+on:
+  push:
+    branches: [ main, master ]
+  delete:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to GitLab
+        run: |
+          # 配置远程仓库地址，组合 Token 和 URL
+          # 格式: https://oauth2:TOKEN@URL
+          git remote add gitlab "https://oauth2:${{ secrets.GITLAB_TOKEN }}@${{ secrets.GITLAB_URL }}"
+          
+          # 强制推送所有分支和标签，确保完全同步
+          # 注意：这会覆盖 GitLab 上的任何修改！
+          git push gitlab --all --force
+          git push gitlab --tags --force
