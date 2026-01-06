@@ -1,0 +1,6 @@
+{
+    "schedule": "daily", // daily|weekly|monthly
+    "ignoredFiles": [
+        "*.webp",                   // ignore by extension
+    ],
+}
