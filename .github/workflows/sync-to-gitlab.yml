@@ -2,25 +2,48 @@ name: Sync to GitLab
 
 on:
   push:
-    branches: [ main, master ]
-  delete:
+    branches:
+      - main
+      - master
+
+  # 允许手动触发，可选
+  workflow_dispatch:
+
+# 整个仓库的同步任务共用同一个并发组
+concurrency:
+  group: sync-to-gitlab
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+
     steps:
+      # 防抖：
+      # 如果 15 秒内又上传了图片，当前任务会被新任务取消
+      - name: Wait for upload burst to finish
+        run: sleep 15
+
       - name: Checkout source code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Push to GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_URL: ${{ secrets.GITLAB_URL }}
         run: |
-          # 配置远程仓库地址，组合 Token 和 URL
-          # 格式: https://oauth2:TOKEN@URL
-          git remote add gitlab "https://oauth2:${{ secrets.GITLAB_TOKEN }}@${{ secrets.GITLAB_URL }}"
-          
-          # 强制推送所有分支和标签，确保完全同步
-          # 注意：这会覆盖 GitLab 上的任何修改！
-          git push gitlab --all --force
-          git push gitlab --tags --force
+          set -euo pipefail
+
+          git remote add gitlab \
+            "https://oauth2:${GITLAB_TOKEN}@${GITLAB_URL}"
+
+          # 图床通常只需要同步当前主分支
+          git push gitlab \
+            "HEAD:refs/heads/${GITHUB_REF_NAME}" \
+            --force
