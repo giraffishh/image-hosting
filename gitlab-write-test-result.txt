@@ -1,19 +1,17 @@
-timestamp_utc=2026-08-18T06:20:04Z
+timestamp_utc=2026-08-18T06:20:56Z
 gitlab_main_sha=64ac2ba46bbfb0ac4a5cd485b43f90f029e1d499
-first_commit=96c0dcd75ebc5193126c2c8b4c347bf765765597
-first_push_exit_code=1
-second_commit=6cdcf63db01beb6c14ac744ab8a7bf54195795d6
-second_push_exit_code=not-run
-delete_exit_code=not-run
+test_commit_sha=7b52e7e3d74c8cdb17e441372a0e0bd724fa1933
+push_exit_code=0
+delete_exit_code=0
 
---- first image commit push ---
-error: RPC failed; HTTP 500 curl 22 The requested URL returned error: 500
-send-pack: unexpected disconnect while reading sideband packet
-fatal: the remote end hung up unexpectedly
-Everything up-to-date
-
---- second image commit push ---
-not-run
+--- tiny blob push output ---
+remote: 
+remote: To create a merge request for github-write-test, visit:        
+remote:   https://mirrors.sustech.edu.cn/git/giraffish/image-hosting/-/merge_requests/new?merge_request%5Bsource_branch%5D=github-write-test        
+remote: 
+To https://mirrors.sustech.edu.cn/git/giraffish/image-hosting.git
+ * [new branch]      HEAD -> github-write-test
 
 --- delete output ---
-not-run
+To https://mirrors.sustech.edu.cn/git/giraffish/image-hosting.git
+ - [deleted]         github-write-test
