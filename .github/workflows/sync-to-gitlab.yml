@@ -1,49 +1,141 @@
-name: Sync to GitLab
+name: GitLab API Write Test
 
 on:
   push:
     branches:
       - main
-      - master
-
-  # 允许手动触发，可选
-  workflow_dispatch:
-
-# 整个仓库的同步任务共用同一个并发组
-concurrency:
-  group: sync-to-gitlab
-  cancel-in-progress: true
+    paths:
+      - .github/workflows/sync-to-gitlab.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  sync:
+  api-write-test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      # 防抖：如果 15 秒内又上传了图片，当前任务会被新任务取消
-      - name: Wait for upload burst to finish
-        run: sleep 15
-
-      - name: Checkout source code
+      - name: Checkout source repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Push to GitLab
+      - name: Upload known-failing WebP through GitLab Commits API
         env:
+          GITLAB_API_TOKEN: ${{ secrets.GITLAB_API_TOKEN }}
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
-          GITLAB_URL: ${{ secrets.GITLAB_URL }}
-          GIT_TERMINAL_PROMPT: "0"
         run: |
-          set -euo pipefail
+          set -u
 
-          git remote add gitlab \
-            "https://oauth2:${GITLAB_TOKEN}@${GITLAB_URL}"
+          API_TOKEN="${GITLAB_API_TOKEN:-${GITLAB_TOKEN:-}}"
+          API_BASE="https://mirrors.sustech.edu.cn/git/api/v4"
+          PROJECT="giraffish%2Fimage-hosting"
+          TEST_BRANCH="github-api-write-test"
+          TARGET_COMMIT="96c0dcd75ebc5193126c2c8b4c347bf765765597"
+          TARGET_PATH="food/20260818053112_8280.webp"
 
-          # 图床只同步当前主分支
-          git push gitlab \
-            "HEAD:refs/heads/${GITHUB_REF_NAME}" \
-            --force
+          if [ -z "${API_TOKEN}" ]; then
+            echo "No GitLab token available." > /tmp/api-error.txt
+            echo "000" > /tmp/create-code.txt
+            echo "not-run" > /tmp/delete-code.txt
+            exit 0
+          fi
+
+          git show "${TARGET_COMMIT}:${TARGET_PATH}" > /tmp/test.webp
+
+          python3 - <<'PY'
+          import base64, json
+          from pathlib import Path
+
+          data = base64.b64encode(Path('/tmp/test.webp').read_bytes()).decode('ascii')
+          payload = {
+              'branch': 'github-api-write-test',
+              'start_branch': 'main',
+              'commit_message': 'Temporary GitLab API WebP write test',
+              'actions': [
+                  {
+                      'action': 'create',
+                      'file_path': 'food/20260818053112_8280.webp',
+                      'content': data,
+                      'encoding': 'base64',
+                  }
+              ],
+          }
+          Path('/tmp/payload.json').write_text(json.dumps(payload), encoding='utf-8')
+          PY
+
+          # Remove a stale test branch if one happens to exist.
+          curl --silent --show-error \
+            --request DELETE \
+            --header "PRIVATE-TOKEN: ${API_TOKEN}" \
+            --output /tmp/predelete-body.txt \
+            --write-out "%{http_code}" \
+            "${API_BASE}/projects/${PROJECT}/repository/branches/${TEST_BRANCH}" \
+            > /tmp/predelete-code.txt || true
+
+          CREATE_CODE=$(
+            curl --silent --show-error \
+              --request POST \
+              --header "PRIVATE-TOKEN: ${API_TOKEN}" \
+              --header "Content-Type: application/json" \
+              --data-binary @/tmp/payload.json \
+              --output /tmp/create-body.txt \
+              --write-out "%{http_code}" \
+              --max-time 60 \
+              "${API_BASE}/projects/${PROJECT}/repository/commits" \
+              || true
+          )
+          echo "${CREATE_CODE}" > /tmp/create-code.txt
+
+          DELETE_CODE="not-run"
+          if [ "${CREATE_CODE}" = "201" ]; then
+            DELETE_CODE=$(
+              curl --silent --show-error \
+                --request DELETE \
+                --header "PRIVATE-TOKEN: ${API_TOKEN}" \
+                --output /tmp/delete-body.txt \
+                --write-out "%{http_code}" \
+                --max-time 30 \
+                "${API_BASE}/projects/${PROJECT}/repository/branches/${TEST_BRANCH}" \
+                || true
+            )
+          fi
+          echo "${DELETE_CODE}" > /tmp/delete-code.txt
+
+          {
+            echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "target_commit=${TARGET_COMMIT}"
+            echo "target_path=${TARGET_PATH}"
+            echo "file_size_bytes=$(wc -c < /tmp/test.webp)"
+            echo "predelete_http_code=$(cat /tmp/predelete-code.txt)"
+            echo "create_http_code=$(cat /tmp/create-code.txt)"
+            echo "delete_http_code=$(cat /tmp/delete-code.txt)"
+            echo
+            echo "--- create response ---"
+            cat /tmp/create-body.txt 2>/dev/null || true
+            echo
+            echo "--- delete response ---"
+            cat /tmp/delete-body.txt 2>/dev/null || true
+            echo
+            echo "--- local error ---"
+            cat /tmp/api-error.txt 2>/dev/null || true
+          } > /tmp/gitlab-api-test-result.txt
+
+      - name: Publish API test result to GitHub
+        if: always()
+        run: |
+          if [ ! -f /tmp/gitlab-api-test-result.txt ]; then
+            {
+              echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              echo "workflow_failed_before_result=true"
+            } > /tmp/gitlab-api-test-result.txt
+          fi
+
+          git switch main
+          cp /tmp/gitlab-api-test-result.txt gitlab-api-test-result.txt
+          git add gitlab-api-test-result.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Record GitLab API upload test result"
+          git push origin main
