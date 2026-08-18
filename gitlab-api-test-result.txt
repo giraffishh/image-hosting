@@ -1,0 +1,20 @@
+timestamp_utc=2026-08-18T07:05:41Z
+target_commit=96c0dcd75ebc5193126c2c8b4c347bf765765597
+target_path=food/20260818053112_8280.webp
+file_size_bytes=83760
+predelete_http_code=404
+create_http_code=500
+delete_http_code=not-run
+
+--- create response ---
+<html>
+<head><title>500 Internal Server Error</title><meta name="color-scheme" content="light dark"></head>
+<body>
+<center><h1>500 Internal Server Error</h1></center>
+<hr><center>nginx-n.wtf/1.31.3</center>
+</body>
+</html>
+
+--- delete response ---
+
+--- local error ---
