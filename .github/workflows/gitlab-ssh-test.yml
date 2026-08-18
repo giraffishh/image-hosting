@@ -1,0 +1,94 @@
+name: GitLab SSH Write Test
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/gitlab-ssh-test.yml
+
+permissions:
+  contents: write
+
+jobs:
+  ssh-write-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout GitHub repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Test WebP push over SSH
+        env:
+          GITLAB_SSH_PRIVATE_KEY: ${{ secrets.GITLAB_SSH_PRIVATE_KEY }}
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -u
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${GITLAB_SSH_PRIVATE_KEY}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -T 10 -H mirrors.sustech.edu.cn >> ~/.ssh/known_hosts 2>/tmp/ssh-keyscan.err || true
+          chmod 600 ~/.ssh/known_hosts
+
+          SSH_URL="git@mirrors.sustech.edu.cn:giraffish/image-hosting.git"
+          git remote add gitlab-ssh "${SSH_URL}"
+
+          set +e
+          LS_OUTPUT="$(git ls-remote gitlab-ssh 2>&1)"
+          LS_CODE=$?
+          set -e
+
+          TARGET_COMMIT="96c0dcd75ebc5193126c2c8b4c347bf765765597"
+          PUSH_CODE="not-run"
+          PUSH_OUTPUT="not-run"
+          DELETE_CODE="not-run"
+          DELETE_OUTPUT="not-run"
+
+          if [ "${LS_CODE}" -eq 0 ]; then
+            set +e
+            PUSH_OUTPUT="$(git push gitlab-ssh "${TARGET_COMMIT}:refs/heads/github-ssh-write-test" --force 2>&1)"
+            PUSH_CODE=$?
+            set -e
+
+            if [ "${PUSH_CODE}" -eq 0 ]; then
+              set +e
+              DELETE_OUTPUT="$(git push gitlab-ssh --delete github-ssh-write-test 2>&1)"
+              DELETE_CODE=$?
+              set -e
+            fi
+          fi
+
+          {
+            echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "ssh_ls_remote_exit_code=${LS_CODE}"
+            echo "target_commit=${TARGET_COMMIT}"
+            echo "push_exit_code=${PUSH_CODE}"
+            echo "delete_exit_code=${DELETE_CODE}"
+            echo
+            echo "--- ssh-keyscan stderr ---"
+            cat /tmp/ssh-keyscan.err || true
+            echo
+            echo "--- ls-remote output ---"
+            echo "${LS_OUTPUT}"
+            echo
+            echo "--- WebP push output ---"
+            echo "${PUSH_OUTPUT}"
+            echo
+            echo "--- delete output ---"
+            echo "${DELETE_OUTPUT}"
+          } > /tmp/gitlab-ssh-test-result.txt
+
+      - name: Publish SSH test result to GitHub
+        run: |
+          git switch main
+          cp /tmp/gitlab-ssh-test-result.txt gitlab-ssh-test-result.txt
+          git add gitlab-ssh-test-result.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Record GitLab SSH test result"
+          git push origin main
