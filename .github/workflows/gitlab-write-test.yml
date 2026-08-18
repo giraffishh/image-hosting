@@ -1,0 +1,86 @@
+name: GitLab Real Write Test
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/gitlab-write-test.yml
+
+permissions:
+  contents: write
+
+jobs:
+  test-write:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout GitHub repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Test tiny real write to GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_URL: ${{ secrets.GITLAB_URL }}
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -u
+
+          AUTH_URL="https://oauth2:${GITLAB_TOKEN}@${GITLAB_URL}"
+          git remote add gitlab "${AUTH_URL}"
+
+          # Start from GitLab's own current main so the push only needs to send
+          # one tiny empty commit, not GitHub's newer image objects.
+          git fetch --no-tags gitlab main
+          GITLAB_MAIN_SHA="$(git rev-parse FETCH_HEAD)"
+
+          git config user.name "GitLab Write Test"
+          git config user.email "gitlab-write-test@users.noreply.github.com"
+
+          git switch --detach "${GITLAB_MAIN_SHA}"
+          git commit --allow-empty -m "Temporary GitLab write test"
+          TEST_SHA="$(git rev-parse HEAD)"
+
+          set +e
+          PUSH_OUTPUT="$(git push gitlab HEAD:refs/heads/github-write-test --force 2>&1)"
+          PUSH_CODE=$?
+          set -e
+
+          SAFE_PUSH_OUTPUT="${PUSH_OUTPUT//${GITLAB_TOKEN}/***}"
+
+          DELETE_CODE="not-run"
+          SAFE_DELETE_OUTPUT="not-run"
+          if [ "${PUSH_CODE}" -eq 0 ]; then
+            set +e
+            DELETE_OUTPUT="$(git push gitlab --delete github-write-test 2>&1)"
+            DELETE_CODE=$?
+            set -e
+            SAFE_DELETE_OUTPUT="${DELETE_OUTPUT//${GITLAB_TOKEN}/***}"
+          fi
+
+          {
+            echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "gitlab_main_sha=${GITLAB_MAIN_SHA}"
+            echo "test_commit_sha=${TEST_SHA}"
+            echo "push_exit_code=${PUSH_CODE}"
+            echo "delete_exit_code=${DELETE_CODE}"
+            echo
+            echo "--- push output ---"
+            echo "${SAFE_PUSH_OUTPUT}"
+            echo
+            echo "--- delete output ---"
+            echo "${SAFE_DELETE_OUTPUT}"
+          } > /tmp/gitlab-write-test-result.txt
+
+      - name: Publish test result back to GitHub
+        run: |
+          git switch main
+          cp /tmp/gitlab-write-test-result.txt gitlab-write-test-result.txt
+          git add gitlab-write-test-result.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Record GitLab write test result"
+          git push origin main
