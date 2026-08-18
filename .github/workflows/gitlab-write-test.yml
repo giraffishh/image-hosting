@@ -19,9 +19,9 @@ jobs:
       - name: Checkout GitHub repository
         uses: actions/checkout@v6
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
-      - name: Test tiny real write to GitLab
+      - name: Push missing image commits one by one
         env:
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           GITLAB_URL: ${{ secrets.GITLAB_URL }}
@@ -29,31 +29,34 @@ jobs:
         run: |
           set -u
 
+          FIRST_COMMIT="96c0dcd75ebc5193126c2c8b4c347bf765765597"
+          SECOND_COMMIT="6cdcf63db01beb6c14ac744ab8a7bf54195795d6"
+          TEST_BRANCH="refs/heads/github-write-test"
+
           AUTH_URL="https://oauth2:${GITLAB_TOKEN}@${GITLAB_URL}"
           git remote add gitlab "${AUTH_URL}"
-
-          # Start from GitLab's own current main so the push only needs to send
-          # one tiny empty commit, not GitHub's newer image objects.
           git fetch --no-tags gitlab main
           GITLAB_MAIN_SHA="$(git rev-parse FETCH_HEAD)"
 
-          git config user.name "GitLab Write Test"
-          git config user.email "gitlab-write-test@users.noreply.github.com"
-
-          git switch --detach "${GITLAB_MAIN_SHA}"
-          git commit --allow-empty -m "Temporary GitLab write test"
-          TEST_SHA="$(git rev-parse HEAD)"
-
           set +e
-          PUSH_OUTPUT="$(git push gitlab HEAD:refs/heads/github-write-test --force 2>&1)"
-          PUSH_CODE=$?
+          OUT1="$(git push gitlab "${FIRST_COMMIT}:${TEST_BRANCH}" --force 2>&1)"
+          CODE1=$?
           set -e
+          SAFE_OUT1="${OUT1//${GITLAB_TOKEN}/***}"
 
-          SAFE_PUSH_OUTPUT="${PUSH_OUTPUT//${GITLAB_TOKEN}/***}"
+          CODE2="not-run"
+          SAFE_OUT2="not-run"
+          if [ "${CODE1}" -eq 0 ]; then
+            set +e
+            OUT2="$(git push gitlab "${SECOND_COMMIT}:${TEST_BRANCH}" --force 2>&1)"
+            CODE2=$?
+            set -e
+            SAFE_OUT2="${OUT2//${GITLAB_TOKEN}/***}"
+          fi
 
           DELETE_CODE="not-run"
           SAFE_DELETE_OUTPUT="not-run"
-          if [ "${PUSH_CODE}" -eq 0 ]; then
+          if [ "${CODE1}" -eq 0 ]; then
             set +e
             DELETE_OUTPUT="$(git push gitlab --delete github-write-test 2>&1)"
             DELETE_CODE=$?
@@ -64,12 +67,17 @@ jobs:
           {
             echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "gitlab_main_sha=${GITLAB_MAIN_SHA}"
-            echo "test_commit_sha=${TEST_SHA}"
-            echo "push_exit_code=${PUSH_CODE}"
+            echo "first_commit=${FIRST_COMMIT}"
+            echo "first_push_exit_code=${CODE1}"
+            echo "second_commit=${SECOND_COMMIT}"
+            echo "second_push_exit_code=${CODE2}"
             echo "delete_exit_code=${DELETE_CODE}"
             echo
-            echo "--- push output ---"
-            echo "${SAFE_PUSH_OUTPUT}"
+            echo "--- first image commit push ---"
+            echo "${SAFE_OUT1}"
+            echo
+            echo "--- second image commit push ---"
+            echo "${SAFE_OUT2}"
             echo
             echo "--- delete output ---"
             echo "${SAFE_DELETE_OUTPUT}"
@@ -77,10 +85,9 @@ jobs:
 
       - name: Publish test result back to GitHub
         run: |
-          git switch main
           cp /tmp/gitlab-write-test-result.txt gitlab-write-test-result.txt
           git add gitlab-write-test-result.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Record GitLab write test result"
+          git commit -m "Record GitLab image write test result"
           git push origin main
