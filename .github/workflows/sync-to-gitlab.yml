@@ -1,4 +1,4 @@
-name: GitLab API Tiny Write Test
+name: GitLab Project Upload Test
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  api-write-test:
+  upload-test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -21,7 +21,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Test tiny GitLab API commit
+      - name: Upload known-failing WebP through Project Uploads API
         env:
           GITLAB_API_TOKEN: ${{ secrets.GITLAB_API_TOKEN }}
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
@@ -37,91 +37,99 @@ jobs:
           fi
 
           API_BASE="https://mirrors.sustech.edu.cn/git/api/v4"
+          PUBLIC_BASE="https://mirrors.sustech.edu.cn/git"
           PROJECT="giraffish%2Fimage-hosting"
-          TEST_BRANCH="github-api-write-test"
+          TARGET_COMMIT="96c0dcd75ebc5193126c2c8b4c347bf765765597"
+          TARGET_PATH="food/20260818053112_8280.webp"
+
+          git show "${TARGET_COMMIT}:${TARGET_PATH}" > /tmp/test.webp
 
           if [ -z "${API_TOKEN}" ]; then
             {
               echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
               echo "token_source=none"
-              echo "create_http_code=000"
+              echo "upload_http_code=000"
               echo "error=no_token_available"
             } > /tmp/gitlab-api-test-result.txt
             exit 0
           fi
 
-          cat > /tmp/payload.json <<'JSON'
-          {
-            "branch": "github-api-write-test",
-            "start_branch": "main",
-            "commit_message": "Temporary tiny GitLab API write test",
-            "actions": [
-              {
-                "action": "create",
-                "file_path": "gitlab-api-tiny-test.txt",
-                "content": "hello from github actions"
-              }
-            ]
-          }
-          JSON
-
-          PREDELETE_CODE=$(
-            curl --silent --show-error \
-              --request DELETE \
-              --header "PRIVATE-TOKEN: ${API_TOKEN}" \
-              --output /tmp/predelete-body.txt \
-              --write-out "%{http_code}" \
-              --max-time 30 \
-              "${API_BASE}/projects/${PROJECT}/repository/branches/${TEST_BRANCH}" \
-              || true
-          )
-
-          CREATE_CODE=$(
+          UPLOAD_CODE=$(
             curl --silent --show-error \
               --request POST \
               --header "PRIVATE-TOKEN: ${API_TOKEN}" \
-              --header "Content-Type: application/json" \
-              --data-binary @/tmp/payload.json \
-              --output /tmp/create-body.txt \
+              --form "file=@/tmp/test.webp;type=image/webp" \
+              --output /tmp/upload-body.txt \
               --write-out "%{http_code}" \
-              --max-time 30 \
-              "${API_BASE}/projects/${PROJECT}/repository/commits" \
+              --max-time 60 \
+              "${API_BASE}/projects/${PROJECT}/uploads" \
               || true
           )
 
+          UPLOAD_ID=""
+          FULL_PATH=""
+          PUBLIC_CODE="not-run"
           DELETE_CODE="not-run"
-          if [ "${CREATE_CODE}" = "201" ]; then
-            DELETE_CODE=$(
-              curl --silent --show-error \
-                --request DELETE \
-                --header "PRIVATE-TOKEN: ${API_TOKEN}" \
-                --output /tmp/delete-body.txt \
-                --write-out "%{http_code}" \
-                --max-time 30 \
-                "${API_BASE}/projects/${PROJECT}/repository/branches/${TEST_BRANCH}" \
-                || true
-            )
+
+          if [ "${UPLOAD_CODE}" = "201" ]; then
+            python3 - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              obj = json.loads(Path('/tmp/upload-body.txt').read_text(encoding='utf-8'))
+          except Exception:
+              obj = {}
+          Path('/tmp/upload-id.txt').write_text(str(obj.get('id', '')), encoding='utf-8')
+          Path('/tmp/full-path.txt').write_text(str(obj.get('full_path', '')), encoding='utf-8')
+          Path('/tmp/upload-url.txt').write_text(str(obj.get('url', '')), encoding='utf-8')
+          PY
+            UPLOAD_ID="$(cat /tmp/upload-id.txt)"
+            FULL_PATH="$(cat /tmp/full-path.txt)"
+
+            if [ -n "${FULL_PATH}" ]; then
+              PUBLIC_CODE=$(
+                curl --silent --show-error \
+                  --output /tmp/public-body.bin \
+                  --write-out "%{http_code}" \
+                  --max-time 30 \
+                  "${PUBLIC_BASE}${FULL_PATH}" \
+                  || true
+              )
+            fi
+
+            if [ -n "${UPLOAD_ID}" ]; then
+              DELETE_CODE=$(
+                curl --silent --show-error \
+                  --request DELETE \
+                  --header "PRIVATE-TOKEN: ${API_TOKEN}" \
+                  --output /tmp/delete-body.txt \
+                  --write-out "%{http_code}" \
+                  --max-time 30 \
+                  "${API_BASE}/projects/${PROJECT}/uploads/${UPLOAD_ID}" \
+                  || true
+              )
+            fi
           fi
 
           {
             echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "token_source=${TOKEN_SOURCE}"
-            echo "payload_size_bytes=$(wc -c < /tmp/payload.json)"
-            echo "predelete_http_code=${PREDELETE_CODE}"
-            echo "create_http_code=${CREATE_CODE}"
+            echo "target_path=${TARGET_PATH}"
+            echo "file_size_bytes=$(wc -c < /tmp/test.webp)"
+            echo "upload_http_code=${UPLOAD_CODE}"
+            echo "upload_id=${UPLOAD_ID}"
+            echo "full_path=${FULL_PATH}"
+            echo "public_fetch_http_code=${PUBLIC_CODE}"
             echo "delete_http_code=${DELETE_CODE}"
             echo
-            echo "--- predelete response ---"
-            cat /tmp/predelete-body.txt 2>/dev/null || true
-            echo
-            echo "--- create response ---"
-            cat /tmp/create-body.txt 2>/dev/null || true
+            echo "--- upload response ---"
+            cat /tmp/upload-body.txt 2>/dev/null || true
             echo
             echo "--- delete response ---"
             cat /tmp/delete-body.txt 2>/dev/null || true
           } > /tmp/gitlab-api-test-result.txt
 
-      - name: Publish API test result to GitHub
+      - name: Publish upload test result to GitHub
         if: always()
         run: |
           if [ ! -f /tmp/gitlab-api-test-result.txt ]; then
@@ -136,5 +144,5 @@ jobs:
           git add gitlab-api-test-result.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Record tiny GitLab API test result"
+          git commit -m "Record GitLab project upload test result"
           git push origin main
