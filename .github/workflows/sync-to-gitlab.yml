@@ -28,7 +28,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Test WebP push to GitLab over SSH
+      - name: Test WebP push to GitLab over SSH IPv4
         env:
           GITLAB_SSH_PRIVATE_KEY: ${{ secrets.GITLAB_SSH_PRIVATE_KEY }}
           GIT_TERMINAL_PROMPT: "0"
@@ -39,10 +39,10 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "${GITLAB_SSH_PRIVATE_KEY}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -T 10 -H mirrors.sustech.edu.cn >> ~/.ssh/known_hosts 2>/tmp/ssh-keyscan.err || true
+          ssh-keyscan -4 -T 10 -H mirrors.sustech.edu.cn >> ~/.ssh/known_hosts 2>/tmp/ssh-keyscan.err || true
           chmod 600 ~/.ssh/known_hosts
 
-          export GIT_SSH_COMMAND="ssh -o ConnectTimeout=10 -o BatchMode=yes -o ServerAliveInterval=5 -o ServerAliveCountMax=1"
+          export GIT_SSH_COMMAND="ssh -4 -o ConnectTimeout=10 -o BatchMode=yes -o ServerAliveInterval=5 -o ServerAliveCountMax=1"
 
           git remote add gitlab-ssh "git@mirrors.sustech.edu.cn:giraffish/image-hosting.git"
 
@@ -73,6 +73,7 @@ jobs:
 
           {
             echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "forced_ip_version=IPv4"
             echo "ssh_ls_remote_exit_code=${LS_CODE}"
             echo "target_commit=${TARGET_COMMIT}"
             echo "push_exit_code=${PUSH_CODE}"
@@ -98,5 +99,5 @@ jobs:
           git add gitlab-ssh-test-result.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Record GitLab SSH test result"
+          git commit -m "Record GitLab SSH IPv4 test result"
           git push origin main
