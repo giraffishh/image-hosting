@@ -5,17 +5,17 @@ on:
     branches:
       - main
       - master
-    paths-ignore:
-      - gitlab-ssh-test-result.txt
 
+  # 允许手动触发，可选
   workflow_dispatch:
 
+# 整个仓库的同步任务共用同一个并发组
 concurrency:
   group: sync-to-gitlab
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   sync:
@@ -23,81 +23,27 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      # 防抖：如果 15 秒内又上传了图片，当前任务会被新任务取消
+      - name: Wait for upload burst to finish
+        run: sleep 15
+
       - name: Checkout source code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Test WebP push to GitLab over SSH IPv4
+      - name: Push to GitLab
         env:
-          GITLAB_SSH_PRIVATE_KEY: ${{ secrets.GITLAB_SSH_PRIVATE_KEY }}
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_URL: ${{ secrets.GITLAB_URL }}
           GIT_TERMINAL_PROMPT: "0"
         run: |
-          set -u
+          set -euo pipefail
 
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "${GITLAB_SSH_PRIVATE_KEY}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -4 -T 10 -H mirrors.sustech.edu.cn >> ~/.ssh/known_hosts 2>/tmp/ssh-keyscan.err || true
-          chmod 600 ~/.ssh/known_hosts
+          git remote add gitlab \
+            "https://oauth2:${GITLAB_TOKEN}@${GITLAB_URL}"
 
-          export GIT_SSH_COMMAND="ssh -4 -o ConnectTimeout=10 -o BatchMode=yes -o ServerAliveInterval=5 -o ServerAliveCountMax=1"
-
-          git remote add gitlab-ssh "git@mirrors.sustech.edu.cn:giraffish/image-hosting.git"
-
-          set +e
-          LS_OUTPUT="$(git ls-remote gitlab-ssh 2>&1)"
-          LS_CODE=$?
-          set -e
-
-          TARGET_COMMIT="96c0dcd75ebc5193126c2c8b4c347bf765765597"
-          PUSH_CODE="not-run"
-          PUSH_OUTPUT="not-run"
-          DELETE_CODE="not-run"
-          DELETE_OUTPUT="not-run"
-
-          if [ "${LS_CODE}" -eq 0 ]; then
-            set +e
-            PUSH_OUTPUT="$(git push gitlab-ssh "${TARGET_COMMIT}:refs/heads/github-ssh-write-test" --force 2>&1)"
-            PUSH_CODE=$?
-            set -e
-
-            if [ "${PUSH_CODE}" -eq 0 ]; then
-              set +e
-              DELETE_OUTPUT="$(git push gitlab-ssh --delete github-ssh-write-test 2>&1)"
-              DELETE_CODE=$?
-              set -e
-            fi
-          fi
-
-          {
-            echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "forced_ip_version=IPv4"
-            echo "ssh_ls_remote_exit_code=${LS_CODE}"
-            echo "target_commit=${TARGET_COMMIT}"
-            echo "push_exit_code=${PUSH_CODE}"
-            echo "delete_exit_code=${DELETE_CODE}"
-            echo
-            echo "--- ssh-keyscan stderr ---"
-            cat /tmp/ssh-keyscan.err || true
-            echo
-            echo "--- ls-remote output ---"
-            echo "${LS_OUTPUT}"
-            echo
-            echo "--- WebP push output ---"
-            echo "${PUSH_OUTPUT}"
-            echo
-            echo "--- delete output ---"
-            echo "${DELETE_OUTPUT}"
-          } > /tmp/gitlab-ssh-test-result.txt
-
-      - name: Publish SSH test result to GitHub
-        run: |
-          git switch main
-          cp /tmp/gitlab-ssh-test-result.txt gitlab-ssh-test-result.txt
-          git add gitlab-ssh-test-result.txt
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Record GitLab SSH IPv4 test result"
-          git push origin main
+          # 图床只同步当前主分支
+          git push gitlab \
+            "HEAD:refs/heads/${GITHUB_REF_NAME}" \
+            --force
