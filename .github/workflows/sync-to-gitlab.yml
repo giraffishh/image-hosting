@@ -23,13 +23,12 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      # 防抖：
-      # 如果 15 秒内又上传了图片，当前任务会被新任务取消
+      # 防抖：如果 15 秒内又上传了图片，当前任务会被新任务取消
       - name: Wait for upload burst to finish
         run: sleep 15
 
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -37,13 +36,14 @@ jobs:
         env:
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           GITLAB_URL: ${{ secrets.GITLAB_URL }}
+          GIT_TERMINAL_PROMPT: "0"
         run: |
           set -euo pipefail
 
           git remote add gitlab \
             "https://oauth2:${GITLAB_TOKEN}@${GITLAB_URL}"
 
-          # 图床通常只需要同步当前主分支
+          # 图床只同步当前主分支
           git push gitlab \
             "HEAD:refs/heads/${GITHUB_REF_NAME}" \
             --force
