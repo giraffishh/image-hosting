@@ -1,4 +1,4 @@
-name: GitLab API Write Test
+name: GitLab API Tiny Write Test
 
 on:
   push:
@@ -21,58 +21,60 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Upload known-failing WebP through GitLab Commits API
+      - name: Test tiny GitLab API commit
         env:
           GITLAB_API_TOKEN: ${{ secrets.GITLAB_API_TOKEN }}
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
         run: |
           set -u
 
-          API_TOKEN="${GITLAB_API_TOKEN:-${GITLAB_TOKEN:-}}"
+          if [ -n "${GITLAB_API_TOKEN:-}" ]; then
+            API_TOKEN="${GITLAB_API_TOKEN}"
+            TOKEN_SOURCE="GITLAB_API_TOKEN"
+          else
+            API_TOKEN="${GITLAB_TOKEN:-}"
+            TOKEN_SOURCE="GITLAB_TOKEN"
+          fi
+
           API_BASE="https://mirrors.sustech.edu.cn/git/api/v4"
           PROJECT="giraffish%2Fimage-hosting"
           TEST_BRANCH="github-api-write-test"
-          TARGET_COMMIT="96c0dcd75ebc5193126c2c8b4c347bf765765597"
-          TARGET_PATH="food/20260818053112_8280.webp"
 
           if [ -z "${API_TOKEN}" ]; then
-            echo "No GitLab token available." > /tmp/api-error.txt
-            echo "000" > /tmp/create-code.txt
-            echo "not-run" > /tmp/delete-code.txt
+            {
+              echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              echo "token_source=none"
+              echo "create_http_code=000"
+              echo "error=no_token_available"
+            } > /tmp/gitlab-api-test-result.txt
             exit 0
           fi
 
-          git show "${TARGET_COMMIT}:${TARGET_PATH}" > /tmp/test.webp
-
-          python3 - <<'PY'
-          import base64, json
-          from pathlib import Path
-
-          data = base64.b64encode(Path('/tmp/test.webp').read_bytes()).decode('ascii')
-          payload = {
-              'branch': 'github-api-write-test',
-              'start_branch': 'main',
-              'commit_message': 'Temporary GitLab API WebP write test',
-              'actions': [
-                  {
-                      'action': 'create',
-                      'file_path': 'food/20260818053112_8280.webp',
-                      'content': data,
-                      'encoding': 'base64',
-                  }
-              ],
+          cat > /tmp/payload.json <<'JSON'
+          {
+            "branch": "github-api-write-test",
+            "start_branch": "main",
+            "commit_message": "Temporary tiny GitLab API write test",
+            "actions": [
+              {
+                "action": "create",
+                "file_path": "gitlab-api-tiny-test.txt",
+                "content": "hello from github actions"
+              }
+            ]
           }
-          Path('/tmp/payload.json').write_text(json.dumps(payload), encoding='utf-8')
-          PY
+          JSON
 
-          # Remove a stale test branch if one happens to exist.
-          curl --silent --show-error \
-            --request DELETE \
-            --header "PRIVATE-TOKEN: ${API_TOKEN}" \
-            --output /tmp/predelete-body.txt \
-            --write-out "%{http_code}" \
-            "${API_BASE}/projects/${PROJECT}/repository/branches/${TEST_BRANCH}" \
-            > /tmp/predelete-code.txt || true
+          PREDELETE_CODE=$(
+            curl --silent --show-error \
+              --request DELETE \
+              --header "PRIVATE-TOKEN: ${API_TOKEN}" \
+              --output /tmp/predelete-body.txt \
+              --write-out "%{http_code}" \
+              --max-time 30 \
+              "${API_BASE}/projects/${PROJECT}/repository/branches/${TEST_BRANCH}" \
+              || true
+          )
 
           CREATE_CODE=$(
             curl --silent --show-error \
@@ -82,11 +84,10 @@ jobs:
               --data-binary @/tmp/payload.json \
               --output /tmp/create-body.txt \
               --write-out "%{http_code}" \
-              --max-time 60 \
+              --max-time 30 \
               "${API_BASE}/projects/${PROJECT}/repository/commits" \
               || true
           )
-          echo "${CREATE_CODE}" > /tmp/create-code.txt
 
           DELETE_CODE="not-run"
           if [ "${CREATE_CODE}" = "201" ]; then
@@ -101,25 +102,23 @@ jobs:
                 || true
             )
           fi
-          echo "${DELETE_CODE}" > /tmp/delete-code.txt
 
           {
             echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "target_commit=${TARGET_COMMIT}"
-            echo "target_path=${TARGET_PATH}"
-            echo "file_size_bytes=$(wc -c < /tmp/test.webp)"
-            echo "predelete_http_code=$(cat /tmp/predelete-code.txt)"
-            echo "create_http_code=$(cat /tmp/create-code.txt)"
-            echo "delete_http_code=$(cat /tmp/delete-code.txt)"
+            echo "token_source=${TOKEN_SOURCE}"
+            echo "payload_size_bytes=$(wc -c < /tmp/payload.json)"
+            echo "predelete_http_code=${PREDELETE_CODE}"
+            echo "create_http_code=${CREATE_CODE}"
+            echo "delete_http_code=${DELETE_CODE}"
+            echo
+            echo "--- predelete response ---"
+            cat /tmp/predelete-body.txt 2>/dev/null || true
             echo
             echo "--- create response ---"
             cat /tmp/create-body.txt 2>/dev/null || true
             echo
             echo "--- delete response ---"
             cat /tmp/delete-body.txt 2>/dev/null || true
-            echo
-            echo "--- local error ---"
-            cat /tmp/api-error.txt 2>/dev/null || true
           } > /tmp/gitlab-api-test-result.txt
 
       - name: Publish API test result to GitHub
@@ -137,5 +136,5 @@ jobs:
           git add gitlab-api-test-result.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Record GitLab API upload test result"
+          git commit -m "Record tiny GitLab API test result"
           git push origin main
