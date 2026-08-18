@@ -1,148 +1,49 @@
-name: GitLab Project Upload Test
+name: Sync to GitLab
 
 on:
   push:
     branches:
       - main
-    paths:
-      - .github/workflows/sync-to-gitlab.yml
+      - master
+
+  # 允许手动触发，可选
+  workflow_dispatch:
+
+# 整个仓库的同步任务共用同一个并发组
+concurrency:
+  group: sync-to-gitlab
+  cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  upload-test:
+  sync:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Checkout source repository
+      # 防抖：如果 15 秒内又上传了图片，当前任务会被新任务取消
+      - name: Wait for upload burst to finish
+        run: sleep 15
+
+      - name: Checkout source code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Upload known-failing WebP through Project Uploads API
+      - name: Push to GitLab
         env:
-          GITLAB_API_TOKEN: ${{ secrets.GITLAB_API_TOKEN }}
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_URL: ${{ secrets.GITLAB_URL }}
+          GIT_TERMINAL_PROMPT: "0"
         run: |
-          set -u
+          set -euo pipefail
 
-          if [ -n "${GITLAB_API_TOKEN:-}" ]; then
-            API_TOKEN="${GITLAB_API_TOKEN}"
-            TOKEN_SOURCE="GITLAB_API_TOKEN"
-          else
-            API_TOKEN="${GITLAB_TOKEN:-}"
-            TOKEN_SOURCE="GITLAB_TOKEN"
-          fi
+          git remote add gitlab \
+            "https://oauth2:${GITLAB_TOKEN}@${GITLAB_URL}"
 
-          API_BASE="https://mirrors.sustech.edu.cn/git/api/v4"
-          PUBLIC_BASE="https://mirrors.sustech.edu.cn/git"
-          PROJECT="giraffish%2Fimage-hosting"
-          TARGET_COMMIT="96c0dcd75ebc5193126c2c8b4c347bf765765597"
-          TARGET_PATH="food/20260818053112_8280.webp"
-
-          git show "${TARGET_COMMIT}:${TARGET_PATH}" > /tmp/test.webp
-
-          if [ -z "${API_TOKEN}" ]; then
-            {
-              echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-              echo "token_source=none"
-              echo "upload_http_code=000"
-              echo "error=no_token_available"
-            } > /tmp/gitlab-api-test-result.txt
-            exit 0
-          fi
-
-          UPLOAD_CODE=$(
-            curl --silent --show-error \
-              --request POST \
-              --header "PRIVATE-TOKEN: ${API_TOKEN}" \
-              --form "file=@/tmp/test.webp;type=image/webp" \
-              --output /tmp/upload-body.txt \
-              --write-out "%{http_code}" \
-              --max-time 60 \
-              "${API_BASE}/projects/${PROJECT}/uploads" \
-              || true
-          )
-
-          UPLOAD_ID=""
-          FULL_PATH=""
-          PUBLIC_CODE="not-run"
-          DELETE_CODE="not-run"
-
-          if [ "${UPLOAD_CODE}" = "201" ]; then
-            python3 - <<'PY'
-          import json
-          from pathlib import Path
-          try:
-              obj = json.loads(Path('/tmp/upload-body.txt').read_text(encoding='utf-8'))
-          except Exception:
-              obj = {}
-          Path('/tmp/upload-id.txt').write_text(str(obj.get('id', '')), encoding='utf-8')
-          Path('/tmp/full-path.txt').write_text(str(obj.get('full_path', '')), encoding='utf-8')
-          Path('/tmp/upload-url.txt').write_text(str(obj.get('url', '')), encoding='utf-8')
-          PY
-            UPLOAD_ID="$(cat /tmp/upload-id.txt)"
-            FULL_PATH="$(cat /tmp/full-path.txt)"
-
-            if [ -n "${FULL_PATH}" ]; then
-              PUBLIC_CODE=$(
-                curl --silent --show-error \
-                  --output /tmp/public-body.bin \
-                  --write-out "%{http_code}" \
-                  --max-time 30 \
-                  "${PUBLIC_BASE}${FULL_PATH}" \
-                  || true
-              )
-            fi
-
-            if [ -n "${UPLOAD_ID}" ]; then
-              DELETE_CODE=$(
-                curl --silent --show-error \
-                  --request DELETE \
-                  --header "PRIVATE-TOKEN: ${API_TOKEN}" \
-                  --output /tmp/delete-body.txt \
-                  --write-out "%{http_code}" \
-                  --max-time 30 \
-                  "${API_BASE}/projects/${PROJECT}/uploads/${UPLOAD_ID}" \
-                  || true
-              )
-            fi
-          fi
-
-          {
-            echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "token_source=${TOKEN_SOURCE}"
-            echo "target_path=${TARGET_PATH}"
-            echo "file_size_bytes=$(wc -c < /tmp/test.webp)"
-            echo "upload_http_code=${UPLOAD_CODE}"
-            echo "upload_id=${UPLOAD_ID}"
-            echo "full_path=${FULL_PATH}"
-            echo "public_fetch_http_code=${PUBLIC_CODE}"
-            echo "delete_http_code=${DELETE_CODE}"
-            echo
-            echo "--- upload response ---"
-            cat /tmp/upload-body.txt 2>/dev/null || true
-            echo
-            echo "--- delete response ---"
-            cat /tmp/delete-body.txt 2>/dev/null || true
-          } > /tmp/gitlab-api-test-result.txt
-
-      - name: Publish upload test result to GitHub
-        if: always()
-        run: |
-          if [ ! -f /tmp/gitlab-api-test-result.txt ]; then
-            {
-              echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-              echo "workflow_failed_before_result=true"
-            } > /tmp/gitlab-api-test-result.txt
-          fi
-
-          git switch main
-          cp /tmp/gitlab-api-test-result.txt gitlab-api-test-result.txt
-          git add gitlab-api-test-result.txt
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Record GitLab project upload test result"
-          git push origin main
+          # 图床只同步当前主分支
+          git push gitlab \
+            "HEAD:refs/heads/${GITHUB_REF_NAME}" \
+            --force
