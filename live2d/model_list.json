@@ -1,0 +1,34 @@
+{
+    "models": [
+		[
+        "Potion-Maker/Pio_deafault",
+		"Potion-Maker/Pio_sailor-costume",
+		"Potion-Maker/Pio_animal-costume",
+		"Potion-Maker/Pio_santa-costume",
+		"Potion-Maker/Pio_star-witch-costume",
+		"Potion-Maker/Pio_winter-coat-2017-costume-white"
+		],
+		[
+        "Potion-Maker/Tia",
+		"Potion-Maker/Tia_blackcat-costume",
+		"Potion-Maker/Tia_blazer-costume-brown",
+		"Potion-Maker/Tia_blackcat-costume",
+		"Potion-Maker/Tia_cute-pajamas-costume-purple",
+		"Potion-Maker/Tia_frill-blouse-costume-green",
+		"Potion-Maker/Tia_sailor-costume",
+		"Potion-Maker/Tia_sulbim-costume-snowflake",
+		"Potion-Maker/Tia_whiteday-costume-purple"
+		],
+        [
+            "ShizukuTalk/shizuku-48",
+            "ShizukuTalk/shizuku-pajama"
+        ]
+	],
+    "messages": [
+        "来自 Potion Maker 的 Pio 酱 ~",
+        "来自 Potion Maker 的 Tia 酱 ~",
+        "Shizuku Talk ！这里是 Shizuku ~",
+		"来着B站7Apoi的Yumi ~",
+		"来自B站天夜彩的冰雪妹妹"
+    ]
+}
